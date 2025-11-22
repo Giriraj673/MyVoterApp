@@ -10,46 +10,38 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Code download
     - uses: actions/checkout@v4
 
-    # 2. Check files (Debugging ke liye - taaki hum dekh sakein main.py kahan hai)
-    - name: Check File Structure
-      run: ls -R
-
-    # 3. Python Setup
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
-    # 4. Java Setup
-    - uses: actions/setup-java@v4
+    - name: Setup Java
+      uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '17'
 
-    # 5. Flutter Setup
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
       with:
         flutter-version: '3.22.0'
 
-    # 6. Direct Install (requirements.txt ki zarurat nahi)
-    - name: Install Flet directly
+    - name: Install Dependencies
       run: |
         pip install --upgrade pip
         pip install flet
         pip install cookiecutter
 
-    # 7. Build APK (Verbose mode taaki error dikhe)
     - name: Build APK
       run: |
         flet build apk -v
 
-    # 8. Upload APK
+    # --- MAGIC FIX HERE ---
+    # Hum "**/*.apk" use kar rahe hain taaki wo file kahin bhi ho, mil jaye.
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: Election-App-APK
-        path: build/app/outputs/flutter-apk/app-release.apk
+        path: "**/*.apk"

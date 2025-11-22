@@ -10,39 +10,44 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Code download karo (Updated to v4)
+    # 1. Code download
     - uses: actions/checkout@v4
 
-    # 2. Python set karo
+    # 2. Check files (Debugging ke liye - taaki hum dekh sakein main.py kahan hai)
+    - name: Check File Structure
+      run: ls -R
+
+    # 3. Python Setup
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
-    # 3. Java set karo (Updated to v4)
+    # 4. Java Setup
     - uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '17'
 
-    # 4. Flutter set karo
+    # 5. Flutter Setup
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
       with:
         flutter-version: '3.22.0'
 
-    # 5. Flet aur dependencies install karo
-    - name: Install Dependencies
+    # 6. Direct Install (requirements.txt ki zarurat nahi)
+    - name: Install Flet directly
       run: |
-        pip install -r requirements.txt
+        pip install --upgrade pip
         pip install flet
+        pip install cookiecutter
 
-    # 6. APK Build karo (Magic Command)
+    # 7. Build APK (Verbose mode taaki error dikhe)
     - name: Build APK
       run: |
-        flet build apk --verbose
+        flet build apk -v
 
-    # 7. APK upload karo (FIXED: v3 -> v4)
+    # 8. Upload APK
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:

@@ -1,0 +1,50 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Code download karo
+    - uses: actions/checkout@v3
+
+    # 2. Python set karo
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    # 3. Java set karo (Android build ke liye zaroori)
+    - uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    # 4. Flutter set karo
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.22.0'
+
+    # 5. Flet aur dependencies install karo
+    - name: Install Dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install flet
+
+    # 6. APK Build karo (Magic Command)
+    - name: Build APK
+      run: |
+        flet build apk --verbose
+
+    # 7. APK upload karo taaki hum download kar sakein
+    - name: Upload APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: Election-App-APK
+        path: build/app/outputs/flutter-apk/app-release.apk

@@ -3,7 +3,7 @@ import sqlite3
 import base64
 import os
 import shutil
-from PIL import Image  # Image ko chhota karne ke liye
+from PIL import Image  # Image manipulation
 import io
 
 # ================= CONFIGURATION =================
@@ -12,18 +12,22 @@ DB_FILENAME = "Ward11_Only.db"
 # --- APK PATH LOGIC ---
 def get_db_path():
     try:
+        # Mobile/APK environment
         return os.path.join(os.getcwd(), DB_FILENAME)
     except:
+        # Desktop environment
         return DB_FILENAME
 
 DB_PATH = get_db_path()
 
 def configure_mobile_db():
+    """Moves DB from assets to internal storage on Android first run"""
     if not os.path.exists(DB_PATH):
         asset_db_path = os.path.join("assets", DB_FILENAME)
         if os.path.exists(asset_db_path):
             try:
                 shutil.copy(asset_db_path, DB_PATH)
+                print("Database copied to internal storage.")
             except Exception as e:
                 print(f"Error copying DB: {e}")
 
@@ -33,6 +37,7 @@ configure_mobile_db()
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    # App Settings Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS app_settings (
             id INTEGER PRIMARY KEY,
@@ -72,6 +77,7 @@ def get_voter_data(query):
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
+        # Search by ID, English Name, or Local Name
         sql = f"""
         SELECT srno, vcardid, l_voter_name, age, sex, l_boothaddress, 
                part_no, assembly_mapping, l_address
@@ -89,12 +95,12 @@ def get_voter_data(query):
         print(f"DB Error: {e}")
         return []
 
-# --- MAGIC FUNCTION: Auto Compress Image ---
+# --- IMPROVED IMAGE COMPRESSION (FIX FOR BLANK PRINT) ---
 def get_image_base64(path):
     if not path or path.strip() == "":
         return ""
         
-    # APK Logic
+    # Check assets folder for APK
     if not os.path.exists(path):
         asset_path = os.path.join("assets", os.path.basename(path))
         if os.path.exists(asset_path):
@@ -102,21 +108,21 @@ def get_image_base64(path):
             
     if path and os.path.exists(path) and os.path.isfile(path):
         try:
-            # Image Compress Logic
             img = Image.open(path)
             
-            # Resize to match Printer Width (380px approx)
-            # Isse data size bohot kam ho jata hai
-            base_width = 380
+            # 1. Convert to RGB (Important for converting PNG to JPEG)
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            
+            # 2. Resize logic (Max width 300px is enough for thermal printers)
+            base_width = 300
             w_percent = (base_width / float(img.size[0]))
             h_size = int((float(img.size[1]) * float(w_percent)))
-            
-            # Resize High Quality
             img = img.resize((base_width, h_size), Image.Resampling.LANCZOS)
             
-            # Save to buffer as PNG
+            # 3. Save as JPEG with Low Quality to reduce string size significantly
             buffered = io.BytesIO()
-            img.save(buffered, format="PNG")
+            img.save(buffered, format="JPEG", quality=50) # Quality 50 is fine for B&W print
             
             return base64.b64encode(buffered.getvalue()).decode('utf-8')
         except Exception as e:
@@ -143,81 +149,136 @@ def main(page: ft.Page):
     txt_cand_name = ft.TextField(label="उमेदवार (Candidate Name)", value=saved_cand)
     txt_party = ft.TextField(label="पार्टी (Party)", value=saved_party)
     txt_symbol = ft.TextField(label="निशाणी (Symbol)", value=saved_symbol)
-    txt_header_status = ft.Text(value="Image Selected" if saved_header_path else "No Image", color=ft.Colors.GREEN if saved_header_path else ft.Colors.RED)
+    txt_header_status = ft.Text(
+        value="Image Selected" if saved_header_path else "No Image", 
+        color=ft.Colors.GREEN if saved_header_path else ft.Colors.RED
+    )
     
     search_box = ft.TextField(label="नाव किंवा EPIC नंबर टाका...", expand=True)
 
-    # --- PRINT LOGIC ---
+    # --- PRINT LOGIC (FIXED WITH TABLES) ---
     def print_slip_action(voter):
         try:
-            c_name = txt_cand_name.value
-            c_party = txt_party.value
-            c_sym = txt_symbol.value
+            # Data Preparation
+            c_name = txt_cand_name.value if txt_cand_name.value else ""
+            c_party = txt_party.value if txt_party.value else ""
+            c_sym = txt_symbol.value if txt_symbol.value else ""
             h_path = header_img_path.current
 
             img_b64 = get_image_base64(h_path)
-            img_html = f'<img src="data:image/png;base64,{img_b64}" class="header-img">' if img_b64 else ""
-            gender = "M" if voter[4] == "M" else "F" if voter[4] == "F" else str(voter[4])
+            img_html = f'<img src="data:image/jpeg;base64,{img_b64}" class="header-img">' if img_b64 else ""
             
+            # Handle Nulls in Voter Data
+            gender = "M" if voter[4] == "M" else "F" if voter[4] == "F" else str(voter[4])
+            v_name = str(voter[2]) if voter[2] else ""
+            v_part = str(voter[6]) if voter[6] else ""
+            v_srno = str(voter[0]) if voter[0] else ""
+            v_age = str(voter[3]) if voter[3] else ""
+            v_epic = str(voter[1]) if voter[1] else ""
+            v_assembly = str(voter[7]) if voter[7] else ""
+            v_addr = str(voter[8]) if voter[8] else ""
+            v_booth = str(voter[5]) if voter[5] else ""
+
+            # HTML Template using TABLE (Better for Thermal Printers)
             html = f"""
             <html>
             <head>
                 <meta charset="utf-8">
                 <style>
-                    body {{ font-family: sans-serif; margin: 0; padding: 0; width: 100%; background-color: #fff; }}
-                    .container {{ padding: 2px; text-align: center; }}
-                    .header-img {{ display: block; margin: 0 auto; width: 98%; object-fit: contain; }}
-                    .cand-box {{ border: 2px solid #000; border-radius: 6px; padding: 5px; font-weight: bold; font-size: 14px; margin: 5px 2px; text-align: center; }}
-                    .cut-line {{ margin: 5px 0; border-bottom: 2px dashed black; text-align: center; height: 10px; line-height: 20px; font-size: 16px; }}
-                    .voter-info {{ text-align: left; margin-top: 0px; font-size: 16px; padding: 0 5px; }}
-                    .bold {{ font-weight: bold; font-size: 18px; }}
-                    p {{ margin: 2px 0; }} 
-                    .row-compact {{ display: flex; justify-content: flex-start; gap: 30px; margin: 0; padding: 0; }}
-                    .epic-simple {{ font-size: 18px; font-weight: bold; margin: 5px 0; }}
-                    .polling-station {{ font-size: 18px; font-weight: bold; }}
+                    body {{ font-family: sans-serif; margin: 0; padding: 0; width: 100%; }}
+                    .container {{ width: 100%; text-align: center; padding: 2px; }}
+                    .header-img {{ width: 90%; max-height: 150px; object-fit: contain; margin: 0 auto; display: block; }}
+                    
+                    .cand-box {{ 
+                        border: 2px solid #000; border-radius: 6px; 
+                        padding: 5px; margin: 5px 2px; 
+                        font-weight: bold; font-size: 14px; text-align: center; 
+                    }}
+                    
+                    .cut-line {{ margin: 8px 0; border-bottom: 2px dashed black; text-align: center; font-size: 16px; }}
+                    
+                    /* Table Styles - Reliable for RawBT */
+                    table {{ width: 100%; border-collapse: collapse; margin-top: 5px; }}
+                    td {{ padding: 2px; vertical-align: top; text-align: left; }}
+                    
+                    .label {{ font-size: 14px; color: #333; }}
+                    .value {{ font-size: 16px; font-weight: bold; color: #000; }}
+                    .big-value {{ font-size: 18px; font-weight: bold; color: #000; }}
                 </style>
             </head>
             <body>
                 <div class="container">
+                    <!-- Header Image -->
                     <div style="text-align: center;">{img_html}</div>
+
+                    <!-- Candidate Box -->
                     <div class="cand-box">
-                        उमेदवार : {c_name}<br>पार्टी : {c_party}<br>निशाणी : {c_sym}
+                        उमेदवार : {c_name}<br>
+                        पार्टी : {c_party}<br>
+                        निशाणी : {c_sym}
                     </div>
+
                     <div class="cut-line">✂ ------------------------- ✂</div>
-                    <div class="voter-info">
-                        <p class="bold">नाव - {voter[2]}</p>
-                        <div class="row-compact"><span>प्रभाग : <b>{voter[6]}</b></span><span>अ क्र : <b>{voter[0]}</b></span></div>
-                        <div class="row-compact"><span>वय : {voter[3]}</span><span>लिंग : {gender}</span></div>
-                        <div class="epic-simple">मतदान कार्ड : {voter[1]}</div>
-                        <p>विधानसभा क्र : {voter[7]}</p>
-                        <p>पत्ता :- {voter[8]}</p>
-                        <div style="margin-top: 8px;">
-                            <span class="bold">मतदान केंद्र : </span><br>
-                            <span class="polling-station">{voter[5]}</span>
-                        </div>
-                    </div>
-                    <div style="text-align: center; margin-top: 10px; font-size: 10px;">Powered by Giriraj Election App</div>
+
+                    <!-- Voter Info Table -->
+                    <table>
+                        <tr>
+                            <td colspan="2" class="value" style="font-size: 18px;">नाव - {v_name}</td>
+                        </tr>
+                        <tr>
+                            <td style="width: 50%;">प्रभाग : <b class="value">{v_part}</b></td>
+                            <td style="width: 50%;">अ क्र : <b class="value">{v_srno}</b></td>
+                        </tr>
+                        <tr>
+                            <td>वय : {v_age}</td>
+                            <td>लिंग : {gender}</td>
+                        </tr>
+                        <tr>
+                            <td colspan="2" class="big-value" style="margin-top:5px; display:block;">EPIC : {v_epic}</td>
+                        </tr>
+                        <tr>
+                            <td colspan="2">विधानसभा क्र : {v_assembly}</td>
+                        </tr>
+                        <tr>
+                            <td colspan="2" style="font-size: 13px;">पत्ता : {v_addr}</td>
+                        </tr>
+                        <tr>
+                            <td colspan="2" style="padding-top: 8px;">
+                                <span class="value">मतदान केंद्र :</span><br>
+                                <span class="big-value">{v_booth}</span>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <div style="text-align: center; margin-top: 15px; font-size: 10px;">Powered by Giriraj Election App</div>
                 </div>
             </body>
             </html>
             """
+            
+            # Encode to Base64
             html_b64 = base64.b64encode(html.encode('utf-8')).decode('utf-8')
+            
+            # Send to RawBT
             page.launch_url(f"rawbt:data:text/html;base64,{html_b64}")
+            
         except Exception as e:
             print(f"Print Error: {e}")
             page.snack_bar = ft.SnackBar(ft.Text(f"Error launching print: {e}"))
             page.snack_bar.open = True
             page.update()
 
-    # --- PREVIEW LOGIC ---
+    # --- PREVIEW LOGIC (Flet UI for Screen) ---
     def show_preview(e, voter):
         try:
+            # Get Data
             c_name = txt_cand_name.value
             c_party = txt_party.value
             c_sym = txt_symbol.value
             h_path = header_img_path.current
             img_b64 = get_image_base64(h_path)
             
+            # Handle Nulls
             v_name = str(voter[2]) if voter[2] else ""
             v_part = str(voter[6]) if voter[6] else ""
             v_srno = str(voter[0]) if voter[0] else ""
@@ -230,6 +291,7 @@ def main(page: ft.Page):
             gender_raw = voter[4]
             gender = "M" if gender_raw == "M" else "F" if gender_raw == "F" else str(gender_raw)
 
+            # Preview Layout (Keep Flet controls for screen view)
             preview_content = ft.Container(
                 bgcolor=ft.Colors.WHITE,
                 padding=15,
@@ -279,10 +341,16 @@ def main(page: ft.Page):
             results_col.controls.append(ft.Text("डेटा सापडला नाही!", color=ft.Colors.RED))
         else:
             for row in data:
+                # Null checks for Card display
+                r_name = row[2] if row[2] else "Unknown"
+                r_epic = row[1] if row[1] else ""
+                r_srno = row[0] if row[0] else ""
+                r_addr = row[8] if row[8] else ""
+                
                 card = ft.Card(content=ft.Container(padding=10, bgcolor=ft.Colors.WHITE, border_radius=10, content=ft.Column([
-                            ft.Text(f"{row[2]}", size=16, weight="bold", color="black"),
-                            ft.Row([ft.Text(f"EPIC: {row[1]}", color="black"), ft.Text(f"Sr.No: {row[0]}", color="black")]),
-                            ft.Text(f"पत्ता: {row[8]}", size=12, color="grey"),
+                            ft.Text(f"{r_name}", size=16, weight="bold", color="black"),
+                            ft.Row([ft.Text(f"EPIC: {r_epic}", color="black"), ft.Text(f"Sr.No: {r_srno}", color="black")]),
+                            ft.Text(f"पत्ता: {r_addr}", size=12, color="grey"),
                             ft.Divider(),
                             ft.Row([ft.OutlinedButton("View Slip 👁️", on_click=lambda e, r=row: show_preview(e, r), style=ft.ButtonStyle(color=ft.Colors.BLUE)), ft.ElevatedButton("Print 🖨️", on_click=lambda e, r=row: print_slip_action(r), bgcolor=ft.Colors.GREEN, color="white")], alignment=ft.MainAxisAlignment.END)
                         ])))
@@ -291,6 +359,7 @@ def main(page: ft.Page):
 
     def on_search_click(e): do_search(search_box.value)
 
+    # --- Settings & File Picker ---
     def pick_file_result(e: ft.FilePickerResultEvent):
         if e.files:
             path = e.files[0].path

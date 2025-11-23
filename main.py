@@ -5,7 +5,6 @@ import os
 import shutil
 from PIL import Image
 import io
-import urllib.parse # URL Encoding ke liye
 
 # ================= CONFIGURATION =================
 DB_FILENAME = "Ward11_Only.db"
@@ -89,7 +88,7 @@ def get_voter_data(query):
         print(f"DB Error: {e}")
         return []
 
-# --- IMAGE COMPRESSION ---
+# --- SUPER AGGRESSIVE IMAGE COMPRESSION ---
 def get_image_base64(path):
     if not path or path.strip() == "":
         return ""
@@ -101,17 +100,19 @@ def get_image_base64(path):
     if path and os.path.exists(path) and os.path.isfile(path):
         try:
             img = Image.open(path)
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
             
-            # Resize for thermal print (Safe Width)
-            base_width = 300
+            # 1. Convert to Black & White (Grayscale) - Saves huge space
+            img = img.convert("L") 
+            
+            # 2. Resize very small (Thumbnail size is enough for thermal)
+            base_width = 200 
             w_percent = (base_width / float(img.size[0]))
             h_size = int((float(img.size[1]) * float(w_percent)))
-            img = img.resize((base_width, h_size), Image.Resampling.LANCZOS)
+            img = img.resize((base_width, h_size), Image.Resampling.NEAREST)
             
+            # 3. Save as JPEG with Low Quality
             buffered = io.BytesIO()
-            img.save(buffered, format="JPEG", quality=50) 
+            img.save(buffered, format="JPEG", quality=30) 
             return base64.b64encode(buffered.getvalue()).decode('utf-8')
         except Exception as e:
             print(f"Image Error: {e}")
@@ -120,7 +121,7 @@ def get_image_base64(path):
 
 # ================= MAIN APP UI =================
 def main(page: ft.Page):
-    page.title = "Voter Slip App"
+    page.title = "Giriraj Voter App"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.scroll = ft.ScrollMode.ADAPTIVE
     page.padding = 10
@@ -138,23 +139,27 @@ def main(page: ft.Page):
     txt_header_status = ft.Text(value="Image Selected" if saved_header_path else "No Image", color=ft.Colors.GREEN if saved_header_path else ft.Colors.RED)
     search_box = ft.TextField(label="नाव किंवा EPIC नंबर टाका...", expand=True)
 
-    # --- METHOD 1: BROWSER PRINT (Thermal Safe) ---
-    def print_via_browser(voter):
+    # --- UNIVERSAL HTML PRINTER (NO RAWBT, NO BOXES) ---
+    def print_slip_html(voter, with_photo=True):
         try:
+            # Data Setup
             c_name = txt_cand_name.value if txt_cand_name.value else ""
             c_party = txt_party.value if txt_party.value else ""
             c_sym = txt_symbol.value if txt_symbol.value else ""
-            h_path = header_img_path.current
-            img_b64 = get_image_base64(h_path)
-            img_html = f'<img src="data:image/jpeg;base64,{img_b64}" class="header-img">' if img_b64 else ""
+            
+            img_html = ""
+            if with_photo:
+                h_path = header_img_path.current
+                img_b64 = get_image_base64(h_path)
+                if img_b64:
+                    img_html = f'<img src="data:image/jpeg;base64,{img_b64}" class="header-img">'
             
             gender = "M" if voter[4] == "M" else "F" if voter[4] == "F" else str(voter[4])
             v_vals = [str(x) if x else "" for x in voter]
 
-            # --- CSS MAGIC FOR THERMAL PRINTER ---
-            # @page { margin: 0 } -> Remove margins to prevent cutting
-            # width: 100% -> Auto adapt to 58mm or 80mm
+            # CSS: Force Black & White, High Contrast
             html = f"""
+            <!DOCTYPE html>
             <html>
             <head>
                 <meta charset="utf-8">
@@ -162,40 +167,30 @@ def main(page: ft.Page):
                 <title>Voter Slip</title>
                 <style>
                     @page {{ size: auto; margin: 0mm; }}
-                    body {{ font-family: sans-serif; margin: 0; padding: 2px; width: 100%; background: #fff; }}
-                    
-                    .container {{ 
-                        width: 100%; 
-                        margin: 0 auto; 
-                        text-align: center; 
-                        padding: 0;
+                    body {{ 
+                        font-family: 'Noto Sans', sans-serif; 
+                        margin: 0; padding: 5px; 
+                        width: 100%; background: #fff; color: #000;
                     }}
-                    
-                    .header-img {{ width: 95%; max-height: 120px; object-fit: contain; display: block; margin: 0 auto; }}
-                    
+                    .container {{ 
+                        width: 100%; max-width: 350px; margin: 0 auto; 
+                        text-align: center; border: 2px dashed #000; padding: 5px;
+                    }}
+                    .header-img {{ width: 80%; max-height: 100px; object-fit: contain; display: block; margin: 0 auto; filter: grayscale(100%); }}
                     .cand-box {{ 
                         border: 2px solid #000; border-radius: 5px; 
-                        padding: 5px; margin: 5px 2px; 
-                        font-weight: bold; font-size: 14px; 
+                        padding: 5px; margin: 5px 0; 
+                        font-weight: bold; font-size: 16px; line-height: 1.4;
                     }}
-                    
                     table {{ width: 100%; border-collapse: collapse; margin-top: 5px; text-align: left; }}
-                    td {{ padding: 2px; vertical-align: top; font-size: 14px; color: #000; }}
-                    
-                    .bold {{ font-weight: bold; }}
-                    .big {{ font-size: 16px; font-weight: bold; }}
-                    
-                    .btn-print {{ 
-                        display: block; width: 90%; margin: 10px auto; padding: 12px; 
+                    td {{ padding: 2px; vertical-align: top; font-size: 15px; color: #000; font-weight: 600; }}
+                    .big {{ font-size: 18px; font-weight: bold; }}
+                    .print-btn {{
+                        display: block; width: 100%; padding: 15px; 
                         background: #000; color: white; text-align: center; 
-                        text-decoration: none; font-size: 18px; border-radius: 5px; font-weight: bold;
+                        font-size: 20px; margin-top: 10px; text-decoration: none;
                     }}
-                    
-                    /* Hide button when printing */
-                    @media print {{ 
-                        .btn-print {{ display: none; }} 
-                        body {{ margin: 0; }}
-                    }} 
+                    @media print {{ .print-btn {{ display: none; }} }}
                 </style>
             </head>
             <body>
@@ -207,18 +202,17 @@ def main(page: ft.Page):
                     <div style="font-size: 12px;">✂ ------------------------- ✂</div>
                     <table>
                         <tr><td colspan="2" class="big">Name: {v_vals[2]}</td></tr>
-                        <tr><td>Ward: <b>{v_vals[6]}</b></td><td>Sr.No: <b>{v_vals[0]}</b></td></tr>
+                        <tr><td colspan="2"><hr style="border-top: 1px solid #000;"></td></tr>
+                        <tr><td>Ward: <b style="font-size:18px;">{v_vals[6]}</b></td><td>Sr.No: <b style="font-size:18px;">{v_vals[0]}</b></td></tr>
                         <tr><td>Age: {v_vals[3]}</td><td>Sex: {gender}</td></tr>
-                        <tr><td colspan="2" class="big" style="border:1px solid #000; padding:3px; display:inline-block; margin-top:3px;">EPIC: {v_vals[1]}</td></tr>
-                        <tr><td colspan="2">AC: {v_vals[7]}</td></tr>
+                        <tr><td colspan="2" class="big" style="border:2px solid #000; padding:5px; text-align:center; margin:5px 0;">EPIC: {v_vals[1]}</td></tr>
                         <tr><td colspan="2" style="font-size:12px;">Addr: {v_vals[8]}</td></tr>
                         <tr><td colspan="2" class="big" style="padding-top:5px;">Booth: {v_vals[5]}</td></tr>
                     </table>
                     <br>
-                    <div style="font-size: 10px;">Powered by Giriraj Election App</div>
+                    <div style="font-size: 10px;">Powered by Giriraj App</div>
                     <br>
-                    <!-- PRINT BUTTON -->
-                    <a href="javascript:window.print()" class="btn-print">🖨️ PRINT NOW</a>
+                    <a href="javascript:window.print()" class="print-btn">🖨️ CLICK TO PRINT</a>
                 </div>
             </body>
             </html>
@@ -226,54 +220,32 @@ def main(page: ft.Page):
             html_b64 = base64.b64encode(html.encode('utf-8')).decode('utf-8')
             page.launch_url(f"data:text/html;base64,{html_b64}")
             
-            page.snack_bar = ft.SnackBar(ft.Text("कृपया Paper Size (58mm/80mm) चेक करें!"))
+            page.snack_bar = ft.SnackBar(ft.Text("Opening... Click 'Print' in Browser!"))
             page.snack_bar.open = True
             page.update()
             
         except Exception as e:
-            page.snack_bar = ft.SnackBar(ft.Text(f"Browser Error: {e}"))
+            page.snack_bar = ft.SnackBar(ft.Text(f"Error: {e}"))
             page.snack_bar.open = True
             page.update()
 
-    # --- METHOD 2: TEXT ONLY (Direct RawBT Backup) ---
-    def print_text_only(voter):
-        try:
-            c_name = txt_cand_name.value
-            gender = "M" if voter[4] == "M" else "F"
-            # Adjusted for 58mm width
-            text_data = (
-                f"[C]<b>{c_name}</b>\n"
-                f"[C]--------------------------------\n"
-                f"[L]Name : <b>{voter[2]}</b>\n"
-                f"[L]Ward: <b>{voter[6]}</b> [R]Sr.No: <b>{voter[0]}</b>\n"
-                f"[L]EPIC : <b>{voter[1]}</b>\n"
-                f"[L]Age  : {voter[3]}   Sex: {gender}\n"
-                f"[L]Booth: {voter[5]}\n"
-                f"[C]--------------------------------\n"
-                f"[C]Powered by Giriraj App\n"
-            )
-            encoded_text = urllib.parse.quote(text_data)
-            page.launch_url(f"rawbt:{encoded_text}")
-        except Exception as e:
-            print(f"Text Print Error: {e}")
-
-    # --- PREVIEW ---
+    # --- PREVIEW UI ---
     def show_preview(e, voter):
+        # Dialog to choose mode
         dlg = ft.AlertDialog(
-            title=ft.Text("Select Print Mode"),
+            title=ft.Text("Print Selection"),
             content=ft.Column([
                 ft.Text(f"Voter: {voter[2]}", weight="bold"),
                 ft.Divider(),
-                ft.ElevatedButton("Method 1: With Photo 📸", 
-                                  on_click=lambda _: print_via_browser(voter), 
-                                  bgcolor=ft.Colors.BLUE, color="white"),
-                ft.Text("Best Quality (Use Chrome Print)", size=10, color="grey"),
-                ft.Divider(),
-                ft.ElevatedButton("Method 2: Fast / No Photo ⚡", 
-                                  on_click=lambda _: print_text_only(voter), 
-                                  bgcolor=ft.Colors.GREEN, color="white"),
-                ft.Text("Works directly without browser", size=10, color="grey"),
-            ], height=240, spacing=5),
+                ft.ElevatedButton("1. Print With Photo 📸", 
+                                  on_click=lambda _: print_slip_html(voter, with_photo=True), 
+                                  bgcolor=ft.Colors.BLUE, color="white", width=250),
+                ft.Text("Agar ye open na ho, to niche wala dabayein 👇", size=10, color="red"),
+                ft.ElevatedButton("2. Print SAFE MODE (No Photo) 📄", 
+                                  on_click=lambda _: print_slip_html(voter, with_photo=False), 
+                                  bgcolor=ft.Colors.GREEN, color="white", width=250),
+                ft.Text("Ye 100% open hoga aur Marathi sahi aayegi.", size=10, color="grey"),
+            ], height=220, alignment=ft.MainAxisAlignment.CENTER, spacing=10),
         )
         page.open(dlg)
 
@@ -291,7 +263,7 @@ def main(page: ft.Page):
                             ft.Text(f"{row[2]}", size=16, weight="bold", color="black"),
                             ft.Text(f"EPIC: {row[1]} | Sr: {row[0]}", color="black"),
                             ft.Divider(),
-                            ft.ElevatedButton("PRINT 🖨️", on_click=lambda e, r=row: show_preview(e, r), bgcolor=ft.Colors.ORANGE, color="white")
+                            ft.ElevatedButton("PRINT MENU 🖨️", on_click=lambda e, r=row: show_preview(e, r), bgcolor=ft.Colors.ORANGE, color="white")
                         ])))
                 results_col.controls.append(card)
         page.update()
@@ -310,7 +282,7 @@ def main(page: ft.Page):
 
     def save_settings(e):
         save_settings_to_db(header_img_path.current, txt_cand_name.value, txt_party.value, txt_symbol.value)
-        page.snack_bar = ft.SnackBar(ft.Text("Saved!"))
+        page.snack_bar = ft.SnackBar(ft.Text("Settings Saved!"))
         page.snack_bar.open = True
         page.update()
 
@@ -321,7 +293,7 @@ def main(page: ft.Page):
     ], visible=False)
 
     page.add(
-        ft.Row([ft.Text("Voter Print", size=20, weight="bold"), ft.IconButton(ft.Icons.SETTINGS, on_click=lambda _: setattr(settings_col, 'visible', not settings_col.visible) or page.update())], alignment="spaceBetween"),
+        ft.Row([ft.Text("Voter App", size=20, weight="bold"), ft.IconButton(ft.Icons.SETTINGS, on_click=lambda _: setattr(settings_col, 'visible', not settings_col.visible) or page.update())], alignment="spaceBetween"),
         settings_col, ft.Divider(),
         ft.Row([search_box, ft.IconButton(ft.Icons.SEARCH, on_click=on_search_click)]),
         results_col
